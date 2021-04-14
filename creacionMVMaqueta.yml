@@ -1,0 +1,81 @@
+---
+
+- name: CREATE VM PLAYBOOK
+  hosts: localhost
+  connection: local
+  gather_facts: False
+  vars:
+    dnsname: '$parametros[VMNAME].$parametros[LOCATION].cloudapp.azure.com'
+    ip: \"{{ lookup('dig', '{{ dnsname }}') }}\"
+
+  tasks:
+    - debug:  msg=\"Public DNS name {{ dnsname }} resolved to IP {{ ip }}.\"
+
+    # The following check is disabled so that the playbook does not stop upon existence of DNS name. Otherwise
+    # it cannot be re-run after VM creation
+    #  - name: Check if DNS is taken
+    #    fail: msg=\"That DNS name seems to be already taken\"
+    #    when: ip != 'NXDOMAIN'
+
+    ## Preguntar a ruben por el check de arriba, que está quitado por si el DNS está cogido, yo diría que para la primera version no se toca,
+
+
+    - name: Create storage account
+      azure_rm_storageaccount: ## Creamos un almacenamiento donde iran tanto la MV como el resourceGroup
+        resource_group: '$parametros[GROUPNAME]'
+        name: '$parametros[VMNAMEMINUSCULAS]' ## NO LE CAMBIAMOS EL NOMBRE Y LUEGO LO USAREMOS, LUEGO ES LO OPTIMO?
+        account_type: Standard_LRS ## Almacenamiento local en tu region (hay varios) Premium_LRS Standard_GRS Standard_LRS Standard_RAGRS Standard_ZRS Premium_ZRS: https://docs.microsoft.com/en-us/azure/storage/common/storage-account-overview
+    - name: Create security group that allows SSH and HTTP #firewall además de trabajar con ACL
+      azure_rm_securitygroup:
+        resource_group: '$parametros[GROUPNAME]'
+        name: '$parametros[VMNAME]' ## POSTERIORMENTE SE USA ESTE NOMBRE COMO NOMBRE DE LA IP Y EN LA CREACION DE UN NIC -> PREGUNTAR A RUBEN SI ES LO OPTIMO
+        rules:
+          - name: SSH  ## TIPO DE ACCESO SSH
+            protocol: Tcp
+            destination_port_range: 22
+            access: Allow
+            priority: 101
+            direction: Inbound
+          - name: WEB ## TIPO DE ACCESO TCP
+            protocol: Tcp
+            destination_port_range: 80
+            access: Allow
+            priority: 102
+            direction: Inbound
+    - name: Create public IP address ## Crear una ip publica para poder conectar con la MV
+      azure_rm_publicipaddress:
+        resource_group: '$parametros[GROUPNAME]'
+        allocation_method: Static
+        name: '$parametros[VMNAME]'
+        ## El dominio tiene que ser todo minusculas
+        domain_name_label: '$parametros[VMNAMEMINUSCULAS]'
+    - name: Create NIC ## Crear una interfaz de red
+      azure_rm_networkinterface:
+        resource_group: '$parametros[GROUPNAME]'
+        name: '$parametros[VMNAME]'
+        virtual_network_name: '$parametros[VNET]'
+        subnet_name: '$parametros[SUBNET]'
+        public_ip_name: '$parametros[VMNAME]' ## SE LLAMAN ASI PORQUE NO LES HEMOS DADO ANTERIORMENTE UN NOMBRE DISTITNO AL DE LA MV
+        security_group: '$parametros[VMNAME]' ## SE LLAMAN ASI PORQUE NO LES HEMOS DADO ANTERIORMENTE UN NOMBRE DISTITNO AL DE LA MV
+    - name: Create VM
+      azure_rm_virtualmachine:
+        resource_group: '$parametros[GROUPNAME]'
+        name: '$parametros[VMNAME]'
+        storage_account: '$parametros[VMNAME]'
+        ## Storage container debe ser minusculas todas las letras
+        storage_container: '$parametros[VMNAMEMINUSCULAS]'
+        storage_blob: '$parametros[VMNAME].vhd' ## ALMACENAMIENTO DEL SO
+        network_interfaces: '$parametros[VMNAME]'
+        vm_size: Standard_D2s_v3 ## tipos de máquinas cpus y ram. https://docs.microsoft.com/en-us/azure/cloud-services/cloud-services-sizes-specs
+        admin_username: $parametros[USUARIO] ## ESTE NOMBRE DE USUARIO VARIARA DEPENDIENDO DE LOS USUARIOS QUE POR PETICIÓN QUIERAN UNA MV
+        admin_password: $parametros[PASSWORD]
+        ## ssh_password_enabled: false ## indica que no tiene contraseña por ssh con el usuario
+        ## En este caso esto de aqui lo comento porque en el caso de que no tenga una contraseña el que es el super user tendrá que usar el sistema de claves, en este caso vamos a probar con darle una contraseña al usuario
+        ## ssh_public_keys: ## SISTEMA DE CLAVES
+        ##   - path: /home/azureuser/.ssh/authorized_keys
+        ##     key_data: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDSoEkmF9egL4K77zixpUDxPfqQcdzEOP/NG5XpErxBpiAO/b4h36YSK7MDWZqqabjLQSXLxolkx10colatEs1HPy+9oRquGz4aaB34MQ4t5mS286UDWi3knJICsU1XkzlrQFkpganZobtZfOtEYHy1FBGiUtOKuLyNynDzU/XzdfFjM1BXvAZ4LphWGZYweJHlUiQzghMVTqIXmYGAHKWnpF9+Z5GMNsfWhHFay+kI4rdgJClAY3wbMH3uiGGVEKAF6WdOzTY/Xnu50KZI61SUQaJ2Jbxf4BjG/DvVa8VIO6uvTRs09iOgSsr5cJ15dR2SciPChURnxJoppjTnMY59 azureuser@gruporecursos2mv1'
+        image: ## SO de la MV
+          offer: CentOS
+          publisher: OpenLogic
+          sku: '7.2'
+          version: latest
