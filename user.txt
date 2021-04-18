@@ -1,0 +1,11 @@
+user: azureuser
+password: Pass.1234567
+
+para conseguir la IP:
+PIP=$(az vm show --show-details --resource-group $RG1NAME --name $VM1NAME --query publicIps --output tsv)
+
+Y para conectar:
+
+ssh adminuser@$PIP
+
+PIP=40.112.70.62
